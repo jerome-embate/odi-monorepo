@@ -24,6 +24,23 @@ Open http://localhost:3000/bookings.
 
 To review the production build (prerendered shells and caching behave differently from `next dev`), stop `make dev` and run `make prod` instead. It uses the same ports.
 
+## Docker
+
+Needs only Docker (with Compose v2), no local PHP or Node.
+
+```bash
+make docker-up      # or: docker compose up -d --build
+```
+
+Open http://localhost:3000/bookings. The API is also published on http://localhost:8000.
+
+- `backend`: Laravel on FrankenPHP (PHP 8.4). The SQLite file is in the `sqlite-data` named volume, so data survives restarts and rebuilds. The first start migrates and seeds; later starts only migrate.
+- `frontend`: Next.js standalone server. It reaches the API at `http://backend:8000` over the compose network (`API_URL`). The browser never calls Laravel directly.
+- `APP_KEY` is generated on first start and kept in the volume. Set `APP_KEY` in a root `.env` to supply your own. `API_PORT` and `WEB_PORT` change the host ports.
+- `make docker-logs` tails both services. `make docker-fresh` deletes the volume and reseeds. `make docker-down` stops the stack and keeps the data.
+
+`make docker-up` uses the same ports as `make dev`/`make prod`, so run only one of them at a time.
+
 ## Commands
 
 | Command | What it does |

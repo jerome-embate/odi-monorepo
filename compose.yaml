@@ -1,0 +1,29 @@
+services:
+  backend:
+    build: ./backend
+    environment:
+      APP_URL: http://localhost:8000
+      APP_TIMEZONE: Australia/Sydney
+      # Optional: set APP_KEY in a root .env; otherwise one is generated into the volume.
+      APP_KEY: ${APP_KEY:-}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    volumes:
+      - sqlite-data:/app/database/sqlite
+    ports:
+      - "${API_PORT:-8000}:8000"
+    restart: unless-stopped
+
+  frontend:
+    build: ./frontend
+    environment:
+      # Server-side only: the browser never talks to Laravel.
+      API_URL: http://backend:8000
+    ports:
+      - "${WEB_PORT:-3000}:3000"
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  sqlite-data:
