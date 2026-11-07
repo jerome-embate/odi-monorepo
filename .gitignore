@@ -2,3 +2,19 @@
 .idea/
 .vscode/
 *.log
+
+# Terraform state files - never commit, may contain sensitive data
+*.tfstate
+*.tfstate.*
+
+# Crash log files
+crash.log
+crash.*.log
+
+# Terraform CLI configuration files
+.terraformrc
+terraform.rc
+
+# Plan output files
+*.tfplan
+*tfplan*
