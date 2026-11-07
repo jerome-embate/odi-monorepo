@@ -10,9 +10,9 @@ resource "aws_lb" "app" {
   }
 }
 
-resource "aws_lb_target_group" "app" {
-  name        = local.name
-  port        = var.container_port
+resource "aws_lb_target_group" "frontend" {
+  name        = "${local.name}-frontend"
+  port        = var.frontend.port
   protocol    = "HTTP"
   target_type = "ip"
   vpc_id      = local.vpc_id
@@ -20,7 +20,7 @@ resource "aws_lb_target_group" "app" {
   deregistration_delay = 30
 
   health_check {
-    path                = var.health_check_path
+    path                = var.frontend.health_check_path
     matcher             = "200-399"
     interval            = 30
     timeout             = 5
@@ -58,6 +58,6 @@ resource "aws_lb_listener" "https" {
 
   default_action {
     type             = "forward"
-    target_group_arn = aws_lb_target_group.app.arn
+    target_group_arn = aws_lb_target_group.frontend.arn
   }
 }

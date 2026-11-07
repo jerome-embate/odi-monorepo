@@ -9,8 +9,8 @@ variable "bucket" {
 }
 
 variable "github_repos" {
-  type        = map(object({
-    repo_id  = number
+  type = map(object({
+    repo_id = number
   }))
   description = "GitHub repositories."
 }
@@ -18,4 +18,9 @@ variable "github_repos" {
 variable "github_account" {
   type        = string
   description = "GitHub account/organization that owns the repositories."
+}
+
+variable "apps" {
+  type        = list(string)
+  description = "Apps in each monorepo. Each gets its own ECR repository named <repo>/<app>."
 }

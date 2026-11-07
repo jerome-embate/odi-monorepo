@@ -1,5 +1,8 @@
 locals {
-  repo_names = toset([for name, ids in var.github_repos : name])
+  # One repository per app in each monorepo, e.g. odi-monorepo/frontend and odi-monorepo/backend.
+  repo_names = toset(flatten([
+    for name, _ in var.github_repos : [for app in var.apps : "${lower(name)}/${app}"]
+  ]))
 }
 
 module "ecr" {
@@ -8,7 +11,7 @@ module "ecr" {
 
   for_each = local.repo_names
 
-  repository_name = lower(each.key)
+  repository_name = each.key
 
   repository_lifecycle_policy = jsonencode({
     rules = [

@@ -9,8 +9,8 @@ variable "bucket" {
 }
 
 variable "github_repos" {
-  type        = map(object({
-    repo_id  = number
+  type = map(object({
+    repo_id = number
   }))
   description = "GitHub repositories."
 }
@@ -21,6 +21,11 @@ variable "github_account" {
 }
 
 variable "iam_role_name" {
-  type = string
+  type        = string
   description = "Github action role name to assume for terraform state access."
+}
+
+variable "apps" {
+  type        = list(string)
+  description = "Apps in each monorepo. Each gets its own ECR repository named <repo>/<app>."
 }

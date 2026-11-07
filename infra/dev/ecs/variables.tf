@@ -16,14 +16,32 @@ variable "app_name" {
   description = "Application name, used to name the ECS, ALB and security group resources."
 }
 
-variable "ecr_repository_name" {
+variable "ecr_repository_prefix" {
   type        = string
-  description = "Name of the ECR repository holding the app image."
+  description = "ECR repository prefix. Images are read from <prefix>/frontend and <prefix>/backend."
 }
 
-variable "image_tag" {
-  type        = string
-  description = "Image tag for the initial task definition. Later releases are deployed by GitHub Actions."
+variable "frontend" {
+  type = object({
+    image_tag         = string
+    port              = optional(number, 3000)
+    cpu               = optional(number, 256)
+    memory            = optional(number, 512)
+    desired_count     = optional(number, 1)
+    health_check_path = optional(string, "/")
+  })
+  description = "Next.js frontend service. It's the only service behind the ALB. image_tag is only used for the initial task definition; later releases are deployed by GitHub Actions."
+}
+
+variable "backend" {
+  type = object({
+    image_tag         = string
+    port              = optional(number, 8000)
+    cpu               = optional(number, 256)
+    memory            = optional(number, 512)
+    health_check_path = optional(string, "/up")
+  })
+  description = "Laravel backend service. Internal only, reachable by the frontend at http://backend:<port> through Service Connect. Always runs one task because SQLite is per task. image_tag is only used for the initial task definition."
 }
 
 variable "domain_name" {
@@ -34,30 +52,6 @@ variable "domain_name" {
 variable "app_subdomain" {
   type        = string
   description = "Subdomain the app is served on, e.g. app for app.example.com."
-}
-
-variable "container_port" {
-  type        = number
-  default     = 3000
-  description = "Port the container listens on."
-}
-
-variable "cpu" {
-  type        = number
-  default     = 256
-  description = "Fargate task CPU units (256 = 0.25 vCPU)."
-}
-
-variable "memory" {
-  type        = number
-  default     = 512
-  description = "Fargate task memory in MiB."
-}
-
-variable "desired_count" {
-  type        = number
-  default     = 1
-  description = "Number of tasks to run."
 }
 
 variable "use_fargate_spot" {
@@ -72,14 +66,8 @@ variable "use_private_subnets" {
   description = "Run tasks in private subnets. Only set to true once the VPC NAT gateway is enabled, otherwise tasks cannot pull from ECR."
 }
 
-variable "health_check_path" {
-  type        = string
-  default     = "/"
-  description = "Path the ALB uses to health check the app."
-}
-
 variable "log_retention_days" {
   type        = number
   default     = 7
-  description = "CloudWatch log retention for the app container."
+  description = "CloudWatch log retention for the app containers."
 }

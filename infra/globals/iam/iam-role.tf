@@ -1,6 +1,10 @@
 locals {
   github_subs = [for name, ids in var.github_repos : "repo:${var.github_account}/${name}@${ids.repo_id}:ref:refs/heads/*"]
-  ecr_repos   = [for name, ids in var.github_repos : "arn:aws:ecr:${var.region}:${data.aws_caller_identity.current.account_id}:repository/${lower(name)}"]
+  ecr_repos = flatten([
+    for name, _ in var.github_repos : [
+      for app in var.apps : "arn:aws:ecr:${var.region}:${data.aws_caller_identity.current.account_id}:repository/${lower(name)}/${app}"
+    ]
+  ])
 }
 
 module "iam_policy" {
