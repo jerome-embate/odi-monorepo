@@ -11,6 +11,9 @@
 crash.log
 crash.*.log
 
+# Local .terraform directories (providers, modules, backend config)
+**/.terraform/
+
 # Terraform CLI configuration files
 .terraformrc
 terraform.rc
