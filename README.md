@@ -3,52 +3,75 @@
 Book customers into workshop service bays without ever double-booking a bay.
 
 - `backend/`: Laravel 12 API (API-only, SQLite, Pest)
-- `frontend/`: Next.js 16 App Router (TypeScript), which talks to the API server-side only
+- `frontend/`: Next.js 16 App Router (TypeScript), which calls the API server-side only
+- `infra/`: Terraform for all AWS infrastructure
 
-## Prerequisites
+Deployed on **AWS ECS Fargate** at **https://odi-monorepo.embate.dev**.
 
-- PHP ≥ 8.2 and Composer
-- Node ≥ 20 and npm
-- `make`: preinstalled on macOS (with the Xcode Command Line Tools) and Linux. On Windows, use WSL.
+> **Note:** To save costs, the infrastructure is currently turned down, so the link above won't load. Let me know and I can spin the servers up.
 
-If `php` on your PATH is older than 8.2, pass the binary explicitly, for example `make setup PHP=/opt/homebrew/opt/php@8.3/bin/php` (the same works for every target).
+## Deployment
 
-## Quickstart
+The frontend and backend run as two separate ECS services on one Fargate cluster in `us-east-1`.
 
-```bash
-make setup   # checks versions, installs deps, creates .env + key, SQLite DB (50 seeded bookings), frontend/.env.local
-make dev     # API on http://127.0.0.1:8000, web on http://localhost:3000
+```
+Internet ──HTTPS──▶ ALB ──▶ frontend (Next.js) ──Service Connect──▶ backend (Laravel)
+                    │         private subnets                         private subnets, not public
+           Route 53 + ACM
 ```
 
-Open http://localhost:3000/bookings.
+- **Frontend** sits behind an Application Load Balancer. HTTP redirects to HTTPS (ACM wildcard cert, Route 53 alias).
+- **Backend** is internal only. The frontend reaches it at `http://backend:8000` through ECS Service Connect, and the ALB never exposes it.
+- Tasks run in private subnets and reach ECR and CloudWatch through a NAT gateway. They use Fargate Spot, and logs go to CloudWatch (`/ecs/dev-odi-monorepo/*`).
+- The backend runs exactly one task because SQLite lives on the task's ephemeral disk. Every new task migrates and reseeds.
 
-To review the production build (prerendered shells and caching behave differently from `next dev`), stop `make dev` and run `make prod` instead. It uses the same ports.
+> **Kept minimal for this demo.** CloudFront, AWS WAF, ECS auto-scaling and RDS are not used. A production setup would add CloudFront for caching, WAF in front of the ALB, auto-scaling policies on the services, and RDS in place of SQLite so the backend can run more than one task.
 
-## Docker
+### CI/CD
 
-Needs only Docker (with Compose v2), no local PHP or Node.
+[`.github/workflows/deploy.yml`](.github/workflows/deploy.yml) deploys on every push to `main` that touches `frontend/` or `backend/`. It only deploys the apps that changed:
 
-```bash
-make docker-up      # or: docker compose up -d --build
-```
+1. Bumps that app's semantic version (git tag `<app>/vX.Y.Z`).
+2. Builds the image and pushes it to ECR as `odi-monorepo/<app>:vX.Y.Z`.
+3. Registers a new task definition revision and rolls the ECS service. If the deployment fails, the circuit breaker rolls it back.
 
-Open http://localhost:3000/bookings. The API is also published on http://localhost:8000.
+GitHub Actions signs in to AWS through OIDC, so the repo stores no long-lived keys. You can also run the workflow by hand and choose a `patch`, `minor` or `major` bump.
 
-- `backend`: Laravel on FrankenPHP (PHP 8.4). The SQLite file is in the `sqlite-data` named volume, so data survives restarts and rebuilds. The first start migrates and seeds; later starts only migrate.
-- `frontend`: Next.js standalone server. It reaches the API at `http://backend:8000` over the compose network (`API_URL`). The browser never calls Laravel directly.
-- `APP_KEY` is generated on first start and kept in the volume. Set `APP_KEY` in a root `.env` to supply your own. `API_PORT` and `WEB_PORT` change the host ports.
-- `make docker-logs` tails both services. `make docker-fresh` deletes the volume and reseeds. `make docker-down` stops the stack and keeps the data.
+## Infrastructure (Terraform)
 
-`make docker-up` uses the same ports as `make dev`/`make prod`, so run only one of them at a time.
+All infrastructure is defined in `infra/`. Remote state lives in the `odi-monorepo-terraform-state` S3 bucket, with native S3 locking.
 
-## Commands
-
-| Command | What it does |
+| Stack | What it manages |
 |---|---|
-| `make setup` | Version checks, composer/npm install, `.env` + app key, SQLite file, migrate --seed, `frontend/.env.local`. Safe to re-run |
-| `make dev` | API (`:8000`) and `next dev` (`:3000`) in parallel |
-| `make prod` | `next build`, then the API (`:8000`) and `next start` (`:3000`) in parallel |
-| `make test` | Backend Pest suite, plus frontend unit tests (`node:test`), `tsc --noEmit` and ESLint |
-| `make test-api` | Backend Pest suite only |
-| `make lint` | Pint (check mode) + `tsc --noEmit` + ESLint |
-| `make fresh` | `migrate:fresh --seed` (resets the data) |
+| `infra/globals/s3` | Terraform state bucket |
+| `infra/globals/ecr` | ECR repositories for `frontend` and `backend` (keeps the last 30 `v*` images) |
+| `infra/globals/iam` | GitHub OIDC provider and the deploy role used by Actions |
+| `infra/dev/vpc` | VPC, public/private subnets across two AZs, single NAT gateway |
+| `infra/dev/ecs` | ECS cluster, services, task definitions, ALB, security groups, Route 53 record, log groups |
+
+Apply them in the order above. For example:
+
+```bash
+cd infra/dev/ecs
+terraform init -backend-config=../state.config
+terraform apply -var-file=../dev.tfvars -var-file=ecs.tfvars
+```
+
+Terraform owns the base task definitions, and GitHub Actions ships new image revisions. That is why the services ignore `task_definition` changes, so an apply never rolls back a release.
+
+## Running locally
+
+With Docker:
+
+```bash
+make docker-up    # http://localhost:3000/bookings
+```
+
+Without Docker (PHP ≥ 8.2, Node ≥ 20):
+
+```bash
+make setup
+make dev          # http://localhost:3000/bookings
+```
+
+Run `make test` for the full test and lint suite.
