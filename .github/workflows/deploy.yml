@@ -1,0 +1,137 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "frontend/**"
+      - "backend/**"
+      - ".github/workflows/deploy.yml"
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: Version bump for each deployed app
+        type: choice
+        options: [patch, minor, major]
+        default: patch
+
+# One deploy per app at a time; a newer push waits rather than cancelling a rollout mid-way.
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: us-east-1
+  ECR_REPOSITORY_PREFIX: odi-monorepo
+  ECS_CLUSTER: dev-odi-monorepo
+  ECS_NAME_PREFIX: dev-odi-monorepo
+
+permissions:
+  contents: read
+
+jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      apps: ${{ steps.apps.outputs.apps }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            frontend:
+              - "frontend/**"
+            backend:
+              - "backend/**"
+            workflow:
+              - ".github/workflows/deploy.yml"
+
+      # Manual runs and workflow edits deploy both apps; otherwise only what changed.
+      - id: apps
+        env:
+          EVENT: ${{ github.event_name }}
+          FRONTEND: ${{ steps.filter.outputs.frontend }}
+          BACKEND: ${{ steps.filter.outputs.backend }}
+          WORKFLOW: ${{ steps.filter.outputs.workflow }}
+        run: |
+          if [ "$EVENT" = "workflow_dispatch" ] || [ "$WORKFLOW" = "true" ]; then
+            FRONTEND=true; BACKEND=true
+          fi
+          apps=()
+          [ "$BACKEND" = "true" ] && apps+=('"backend"')
+          [ "$FRONTEND" = "true" ] && apps+=('"frontend"')
+          echo "apps=[$(IFS=,; echo "${apps[*]}")]" >> "$GITHUB_OUTPUT"
+
+  deploy:
+    needs: changes
+    if: needs.changes.outputs.apps != '[]'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # push the <app>/vX.Y.Z release tag
+      id-token: write
+    strategy:
+      fail-fast: false
+      matrix:
+        app: ${{ fromJSON(needs.changes.outputs.apps) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # Per-app semantic version: git tag <app>/vX.Y.Z, image tag vX.Y.Z.
+      # Pushes default to a patch bump; a re-run on a tagged commit reuses its version.
+      - id: version
+        env:
+          APP: ${{ matrix.app }}
+          BUMP: ${{ inputs.bump || 'patch' }}
+        run: ./scripts/git_image_tag.sh -a "$APP" -v "$BUMP"
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      # Image tags start with "v": the ECR lifecycle rule keeps the last 30 of those.
+      - id: image
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+          APP: ${{ matrix.app }}
+          TAG: ${{ steps.version.outputs.image-tag }}
+        run: |
+          image="${REGISTRY}/${ECR_REPOSITORY_PREFIX}/${APP}:${TAG}"
+          docker build --platform linux/amd64 -t "$image" "./${APP}"
+          docker push "$image"
+          echo "image=$image" >> "$GITHUB_OUTPUT"
+
+      # Only publish the version once its image exists, so a failed build doesn't burn it.
+      - name: Push release tag
+        if: steps.version.outputs.created == 'true'
+        env:
+          GIT_TAG: ${{ steps.version.outputs.git-tag }}
+        run: git push origin "refs/tags/${GIT_TAG}"
+
+      # Start from the live task definition so settings managed by Terraform are kept.
+      - name: Download current task definition
+        env:
+          APP: ${{ matrix.app }}
+        run: |
+          aws ecs describe-task-definition \
+            --task-definition "${ECS_NAME_PREFIX}-${APP}" \
+            --query taskDefinition > task-definition.json
+
+      - id: render
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: task-definition.json
+          container-name: ${{ matrix.app }}
+          image: ${{ steps.image.outputs.image }}
+
+      - uses: aws-actions/amazon-ecs-deploy-task-definition@v2
+        with:
+          task-definition: ${{ steps.render.outputs.task-definition }}
+          cluster: ${{ env.ECS_CLUSTER }}
+          service: ${{ env.ECS_NAME_PREFIX }}-${{ matrix.app }}
+          wait-for-service-stability: true

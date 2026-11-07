@@ -6,7 +6,8 @@ PHP ?= php
 COMPOSER ?= $(PHP) $(shell command -v composer)
 API_URL ?= http://127.0.0.1:8000
 
-.PHONY: check setup dev dev-api dev-web prod build-web start-web test test-api test-web lint fresh
+.PHONY: check setup dev dev-api dev-web prod build-web start-web test test-api test-web lint fresh \
+	docker-up docker-down docker-logs docker-fresh
 
 check:
 	@$(PHP) -r 'exit(version_compare(PHP_VERSION, "8.2.0", ">=") ? 0 : 1);' || { \
@@ -66,3 +67,19 @@ lint:
 
 fresh:
 	cd backend && $(PHP) artisan migrate:fresh --seed --force
+
+# --- Docker (compose.yaml): API on :8000, web on :3000, SQLite in the `sqlite-data` volume.
+
+docker-up:
+	docker compose up -d --build
+
+docker-down:
+	docker compose down
+
+docker-logs:
+	docker compose logs -f
+
+# Drops the SQLite volume; the next start migrates and reseeds.
+docker-fresh:
+	docker compose down -v
+	docker compose up -d --build
